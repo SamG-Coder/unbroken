@@ -37,6 +37,7 @@ export const ACTS = [
 // Camera in space: an orbit (focus, log10 distance, azimuth, elevation), so the shot
 // can cross eight orders of magnitude without the path overshooting.
 const FORWARD_EL = 0.06;
+const PORTAL_SCALE = 1 / 340; // matches the world camera speed to the opening space move at the crossing
 const P = [PLANET_AT.x, PLANET_AT.y, PLANET_AT.z];
 const SPACE = [
   { t: 0, f: [0, 0, 0], d: Math.log10(0.46), az: 0, el: FORWARD_EL, fov: 50, e: 1.0, off: [0, 0, 0] },
@@ -136,9 +137,30 @@ export function createDirector({ camera, post, world, space, gateCenter }) {
 
   function apply(t) {
     state.caption = ACTS.filter((a) => t >= a.t).pop();
-    const inSpace = t < T_WORLD;
+    // Just before the plane the disc would slip inside the near clip distance, so the
+    // film hands over to the space view it was already showing, from the same pose.
+    const crossing = t >= LENGTH - 0.12;
+    const inSpace = t < T_WORLD || crossing;
     space.time.value = t;
-    if (inSpace) {
+    if (crossing) {
+      state.regime = "space";
+      worldPose(t, worldCam, worldLook);
+      camera.position.copy(worldCam);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(worldLook);
+      toGate.copy(gateCenter).addScaledVector(forward0, 30).sub(camera.position).normalize();
+      turn.setFromUnitVectors(toGate, forward0);
+      camera.quaternion.premultiply(turn);
+      camera.position.copy(S0).addScaledVector(forward0, -worldCam.distanceTo(gateCenter) * PORTAL_SCALE);
+      if (Math.abs(camera.fov - SPACE[0].fov) > 1e-3) { camera.fov = SPACE[0].fov; camera.updateProjectionMatrix(); }
+      space.time.value = t - LENGTH;
+      space.planetOn.value = 0;
+      space.whiteout.value = 0;
+      post.exposure.value = SPACE[0].e;
+      post.dofOn.value = 0;
+      post.flash.value = 0;
+      post.bokeh.value = 0;
+    } else if (inSpace) {
       state.regime = "space";
       const o = poseSpace(t, camera);
       applyPlanet(t, camera);
@@ -176,7 +198,7 @@ export function createDirector({ camera, post, world, space, gateCenter }) {
     // the world camera's remaining distance to the gate, so parallax lines up.
     const spaceCam = state.spaceCam;
     if (!inSpace && t > 42) {
-      const k = 1 / 340;  // matches the world camera speed to the opening space move at the crossing
+      const k = PORTAL_SCALE;
       // Only the distance to the gate carries over, so the hole stays on the ring's axis.
       spaceCam.position.copy(S0).addScaledVector(forward0, -camera.position.distanceTo(gateCenter) * k);
       // The hole stays centred in the ring: the view is turned so it sits along the line
